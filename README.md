@@ -1,6 +1,6 @@
 CUDA Implementation of the Direct Coulomb Summation (DCS) Scatter algorithm.
 
-Tested using Visual Studio 2017 (v141).
+Tested using Visual Studio 2017 (v141) and CUDA v9.1.
 
 Example run:
 
