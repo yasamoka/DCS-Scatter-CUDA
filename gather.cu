@@ -15,7 +15,7 @@
 #define EPS 0.01
 #define BLOCK_WIDTH 16
 
-#define LATTICE_DATA_TYPE double
+#define LATTICE_DATA_TYPE float
 
 __global__ void DCSKernel(LATTICE_DATA_TYPE *slice, const float *atomXs, const float *atomYs, const float *atomZs, const float *charges, const unsigned short int z, const unsigned int numOfAtoms, const unsigned short int latticeX, const unsigned short int latticeY, const LATTICE_DATA_TYPE latticeGridSpacing)
 {
@@ -46,7 +46,7 @@ __global__ void DCSKernel(LATTICE_DATA_TYPE *slice, const float *atomXs, const f
 void CPU(LATTICE_DATA_TYPE *lattice, const float *atomXs, const float *atomYs, const float *atomZs, const float *charges, const unsigned short int z, const unsigned int numOfAtoms, const unsigned short int latticeX, const unsigned short int latticeY, const LATTICE_DATA_TYPE latticeGridSpacing)
 {
 	float atomX, atomY, atomZ, charge;
-	
+
 	const unsigned int latticeSliceGridSize = latticeX * latticeY;
 	unsigned long int latticeZOffset;
 	unsigned int latticeYOffset;
@@ -57,7 +57,7 @@ void CPU(LATTICE_DATA_TYPE *lattice, const float *atomXs, const float *atomYs, c
 	LATTICE_DATA_TYPE potential;
 
 	latticeZOffset = latticeSliceGridSize * z;
-	
+
 	for (unsigned short int y = 0; y < latticeY; y++) {
 		latticeYOffset = latticeX * y;
 		latticeOffset = latticeZOffset + latticeYOffset;
@@ -75,6 +75,47 @@ void CPU(LATTICE_DATA_TYPE *lattice, const float *atomXs, const float *atomYs, c
 				dz = atomZ - z * latticeGridSpacing;
 				distance = sqrt(dx * dx + dy * dy + dz * dz);
 				potential += charge / distance;
+			}
+			lattice[latticeIdx] = potential;
+		}
+	}
+}
+
+// using pre-computed dy2 + dz2
+void CPU2(LATTICE_DATA_TYPE *lattice, const float *atomXs, const float *atomYs, const float *atomZs, const float *charges, const unsigned short int z, const unsigned int numOfAtoms, const unsigned short int latticeX, const unsigned short int latticeY, const LATTICE_DATA_TYPE latticeGridSpacing)
+{
+	float atomX, atomY, atomZ, charge;
+	
+	const unsigned int latticeSliceGridSize = latticeX * latticeY;
+	unsigned long int latticeZOffset;
+	unsigned int latticeYOffset;
+	unsigned long int latticeOffset;
+	unsigned long int latticeIdx;
+
+	LATTICE_DATA_TYPE dx, dy, dz, distance;
+	LATTICE_DATA_TYPE *dz2 = (LATTICE_DATA_TYPE*)malloc(numOfAtoms * sizeof(LATTICE_DATA_TYPE));
+	LATTICE_DATA_TYPE *dy2dz2 = (LATTICE_DATA_TYPE*)malloc(numOfAtoms * sizeof(LATTICE_DATA_TYPE));
+	LATTICE_DATA_TYPE potential;
+
+	latticeZOffset = latticeSliceGridSize * z;
+	for (unsigned int atomIdx = 0; atomIdx < numOfAtoms; atomIdx++) {
+		dz = atomZs[atomIdx] - z * latticeGridSpacing;
+		dz2[atomIdx] = dz * dz;
+	}
+	for (unsigned short int y = 0; y < latticeY; y++) {
+		latticeYOffset = latticeX * y;
+		latticeOffset = latticeZOffset + latticeYOffset;
+		for (unsigned int atomIdx = 0; atomIdx < numOfAtoms; atomIdx++) {
+			dy = atomYs[atomIdx] - y * latticeGridSpacing;
+			dy2dz2[atomIdx] = dy * dy + dz2[atomIdx];
+		}
+		for (unsigned short int x = 0; x < latticeX; x++) {
+			latticeIdx = latticeOffset + x;
+			potential = 0;
+			for (unsigned int atomIdx = 0; atomIdx < numOfAtoms; atomIdx++) {
+				dx = atomXs[atomIdx] - x * latticeGridSpacing;
+				distance = sqrt(dx * dx + dy2dz2[atomIdx]);
+				potential += charges[atomIdx] / distance;
 			}
 			lattice[latticeIdx] = potential;
 		}
@@ -136,6 +177,7 @@ int main(int argc, char *argv[])
 	float *d_Charge;
 
 	LATTICE_DATA_TYPE *latticeCPU;
+	LATTICE_DATA_TYPE *latticeCPU2;
 	LATTICE_DATA_TYPE *h_LatticeDCS;
 	LATTICE_DATA_TYPE **d_SliceDCS;
 
@@ -161,6 +203,8 @@ int main(int argc, char *argv[])
 	GpuTimer DCSKernelTimer;
 	clock_t CPUClock;
 	double CPUDuration;
+	clock_t CPU2Clock;
+	double CPU2Duration;
 
 	cudaStatus = cudaSetDevice(0);
 	if (cudaStatus != cudaSuccess) {
@@ -181,6 +225,9 @@ int main(int argc, char *argv[])
 
 	latticeCPU = (LATTICE_DATA_TYPE*)malloc(latticeGridSize * sizeof(LATTICE_DATA_TYPE));
 	memset(latticeCPU, 0, latticeGridSize * sizeof(LATTICE_DATA_TYPE));
+
+	latticeCPU2 = (LATTICE_DATA_TYPE*)malloc(latticeGridSize * sizeof(LATTICE_DATA_TYPE));
+	memset(latticeCPU2, 0, latticeGridSize * sizeof(LATTICE_DATA_TYPE));
 
 	mallocDuration = (clock() - mallocClock) / (double)CLOCKS_PER_SEC;
 	printf("Memory allocation (host): %f ms\n", mallocDuration * 1000);
@@ -326,13 +373,29 @@ int main(int argc, char *argv[])
 
 	//CPU
 	CPUClock = clock();
-	memset(latticeCPU, 0, latticeGridSize * sizeof(LATTICE_DATA_TYPE));
 	for (unsigned short int z = 0; z < latticeZ; z++) {
 		CPU(latticeCPU, h_AtomX, h_AtomY, h_AtomZ, h_Charge, z, numOfAtoms, latticeX, latticeY, latticeGridSpacing);
 	}
 	CPUDuration = (clock() - CPUClock) / (double)CLOCKS_PER_SEC;
 	printf("CPU duration: %f ms\n", CPUDuration * 1000);
 
+	//CPU2
+	CPU2Clock = clock();
+	for (unsigned short int z = 0; z < latticeZ; z++) {
+		CPU2(latticeCPU2, h_AtomX, h_AtomY, h_AtomZ, h_Charge, z, numOfAtoms, latticeX, latticeY, latticeGridSpacing);
+	}
+	CPU2Duration = (clock() - CPU2Clock) / (double)CLOCKS_PER_SEC;
+	printf("CPU2 duration: %f ms\n", CPU2Duration * 1000);
+
+	printf("CPU2 verification started.\n");
+	for (unsigned int i = 0; i < latticeGridSize; i++) {
+		if (abs(latticeCPU[i] - latticeCPU2[i]) > EPS) {
+			fprintf(stderr, "DCS Verification failed at element %i! latticeCPU[%i] = %f, latticeCPU2[%i] = %f\n", i, i, latticeCPU[i], i, latticeCPU2[i]);
+			return 1;
+		}
+	}
+	printf("CPU2 verification PASSED.\n");
+	
 	printf("DCS verification started.\n");
 	for (unsigned int i = 0; i < latticeGridSize; i++) {
 		if (abs(latticeCPU[i] - h_LatticeDCS[i]) > EPS) {
