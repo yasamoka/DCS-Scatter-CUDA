@@ -274,10 +274,8 @@ int main(int argc, char *argv[])
 	cudaHostAlloc((void**)&d_SliceDCS, numOfStreams * sizeof(LATTICE_DATA_TYPE*), cudaHostAllocDefault);
 
 	latticeCPU = (LATTICE_DATA_TYPE*)malloc(latticeGridSize * sizeof(LATTICE_DATA_TYPE));
-	//memset(latticeCPU, 0, latticeGridSize * sizeof(LATTICE_DATA_TYPE));
 
 	latticeCPU2 = (LATTICE_DATA_TYPE*)malloc(latticeGridSize * sizeof(LATTICE_DATA_TYPE));
-	//memset(latticeCPU2, 0, latticeGridSize * sizeof(LATTICE_DATA_TYPE));
 
 	mallocDuration = (clock() - mallocClock) / (double)CLOCKS_PER_SEC;
 	printf("Memory allocation (host): %f ms\n", mallocDuration * 1000);
@@ -370,10 +368,6 @@ int main(int argc, char *argv[])
 	h_LatticeDCSOffset = 0;
 	if (latticeZ > 1) {
 		for (unsigned short int z = 0; z < latticeZ; z += numOfStreams) {
-			/*for (streamIdx = 0; streamIdx < numOfStreams; streamIdx++) {
-				cudaMemsetAsync(d_SliceDCS[streamIdx], 0, sliceGridSize * sizeof(LATTICE_DATA_TYPE), stream[streamIdx]);
-			}*/
-			
 			for (streamIdx = 0; streamIdx < numOfStreams; streamIdx++) {
 				DCSKernel << <dimGridDCS, dimBlockDCS, 0, stream[streamIdx] >> >(d_SliceDCS[streamIdx], d_AtomX, d_AtomY, d_AtomZ, d_Charge, z + streamIdx, numOfAtoms, latticeX, latticeY, latticeGridSpacing);
 			}
@@ -388,10 +382,6 @@ int main(int argc, char *argv[])
 	numOfRemainingLaunches = latticeZ % numOfStreams;
 	if (numOfRemainingLaunches != 0) {
 		unsigned short int z = (latticeZ - numOfStreams);
-		/*for (streamIdx = 0; streamIdx < numOfRemainingLaunches; streamIdx++) {
-			cudaMemsetAsync(d_SliceDCS[streamIdx], 0, sliceGridSize * sizeof(LATTICE_DATA_TYPE), stream[streamIdx]);
-		}*/
-
 		for (streamIdx = 0; streamIdx < numOfRemainingLaunches; streamIdx++) {
 			DCSKernel << <dimGridDCS, dimBlockDCS, 0, stream[streamIdx] >> >(d_SliceDCS[streamIdx], d_AtomX, d_AtomY, d_AtomZ, d_Charge, z + streamIdx, numOfAtoms, latticeX, latticeY, latticeGridSpacing);
 		}
@@ -423,10 +413,6 @@ int main(int argc, char *argv[])
 	h_LatticeDCSOffset = 0;
 	if (latticeZ > 1) {
 		for (unsigned short int z = 0; z < latticeZ; z += numOfStreams) {
-			/*for (streamIdx = 0; streamIdx < numOfStreams; streamIdx++) {
-				cudaMemsetAsync(d_SliceDCS[streamIdx], 0, sliceGridSize * sizeof(LATTICE_DATA_TYPE), stream[streamIdx]);
-			}*/
-
 			for (streamIdx = 0; streamIdx < numOfStreams; streamIdx++) {
 				DCS2Kernel << <dimGridDCS2, dimBlockDCS, 0, stream[streamIdx] >> >(d_SliceDCS[streamIdx], d_AtomX, d_AtomY, d_AtomZ, d_Charge, z + streamIdx, numOfPointsDCS2, numOfAtoms, latticeX, latticeY, latticeGridSpacing);
 			}
@@ -441,10 +427,6 @@ int main(int argc, char *argv[])
 	numOfRemainingLaunches = latticeZ % numOfStreams;
 	if (numOfRemainingLaunches != 0) {
 		unsigned short int z = (latticeZ - numOfStreams);
-		/*for (streamIdx = 0; streamIdx < numOfRemainingLaunches; streamIdx++) {
-			cudaMemsetAsync(d_SliceDCS[streamIdx], 0, sliceGridSize * sizeof(LATTICE_DATA_TYPE), stream[streamIdx]);
-		}*/
-		
 		for (streamIdx = 0; streamIdx < numOfRemainingLaunches; streamIdx++) {
 			DCS2Kernel << <dimGridDCS2, dimBlockDCS, 0, stream[streamIdx] >> >(d_SliceDCS[streamIdx], d_AtomX, d_AtomY, d_AtomZ, d_Charge, z + streamIdx, numOfPointsDCS2, numOfAtoms, latticeX, latticeY, latticeGridSpacing);
 		}
@@ -523,6 +505,7 @@ Error:
 	cudaFree(d_AtomY);
 	cudaFree(d_AtomZ);
 	for (uint8_t streamIdx = 0; streamIdx < numOfStreams; streamIdx++) {
+		cudaStreamDestroy(stream[streamIdx]);
 		cudaFree(d_SliceDCS[streamIdx]);
 	}
 
