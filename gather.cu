@@ -12,8 +12,9 @@
 
 #include "tclap/CmdLine.h"
 
-#define EPS 0.02
+#define EPS 0.03
 #define BLOCK_WIDTH 16
+#define NUM_OF_POINTS_DCS2 8
 
 #define LATTICE_DATA_TYPE float
 
@@ -44,7 +45,7 @@ __global__ void DCSKernel(LATTICE_DATA_TYPE *slice, const float *atomXs, const f
 }
 
 // thread coarsening and memory coalescing
-__global__ void DCS2Kernel(LATTICE_DATA_TYPE *slice, const float *atomXs, const float *atomYs, const float *atomZs, const float *charges, const unsigned short int z, const uint8_t numOfPoints, const unsigned int numOfAtoms, const unsigned short int latticeX, const unsigned short int latticeY, const LATTICE_DATA_TYPE latticeGridSpacing)
+__global__ void DCS2Kernel(LATTICE_DATA_TYPE *slice, const float *atomXs, const float *atomYs, const float *atomZs, const float *charges, const unsigned short int z, const unsigned int numOfAtoms, const unsigned short int latticeX, const unsigned short int latticeY, const LATTICE_DATA_TYPE latticeGridSpacing)
 {
 	const unsigned int sliceGridSize = latticeX * latticeY;
 	const unsigned short int x = blockDim.x * blockIdx.x + threadIdx.x;
@@ -52,9 +53,9 @@ __global__ void DCS2Kernel(LATTICE_DATA_TYPE *slice, const float *atomXs, const 
 	if (x < latticeX && y < latticeY) {
 		float atomX, atomY, atomZ, charge;
 		LATTICE_DATA_TYPE dx, dy, dz, dy2dz2;
-		LATTICE_DATA_TYPE potential[8];
+		LATTICE_DATA_TYPE potential[NUM_OF_POINTS_DCS2];
 		unsigned short int pointIdx;
-		for (pointIdx = 0; pointIdx < numOfPoints; pointIdx++) {
+		for (pointIdx = 0; pointIdx < NUM_OF_POINTS_DCS2; pointIdx++) {
 			potential[pointIdx] = 0;
 		}
 		unsigned short int x1;
@@ -69,7 +70,7 @@ __global__ void DCS2Kernel(LATTICE_DATA_TYPE *slice, const float *atomXs, const 
 			dy2dz2 = dy * dy + dz * dz;
 
 			x1 = x;
-			for (pointIdx = 0; pointIdx < numOfPoints; pointIdx++) {
+			for (pointIdx = 0; pointIdx < NUM_OF_POINTS_DCS2; pointIdx++) {
 				dx = atomX - x1 * latticeGridSpacing;
 				potential[pointIdx] += charge / sqrt(dx * dx + dy2dz2);
 				x1 += blockDim.x;
@@ -77,7 +78,7 @@ __global__ void DCS2Kernel(LATTICE_DATA_TYPE *slice, const float *atomXs, const 
 		}
 		unsigned int sliceYOffset = latticeX * y;
 		x1 = x;
-		for (pointIdx = 0; pointIdx < numOfPoints; pointIdx++) {
+		for (pointIdx = 0; pointIdx < NUM_OF_POINTS_DCS2; pointIdx++) {
 			slice[sliceYOffset + x1] = potential[pointIdx];
 			x1 += blockDim.x;
 			if (x1 >= latticeX) {
@@ -214,8 +215,6 @@ int main(int argc, char *argv[])
 	const unsigned short int latticeZ = floor(latticeD / latticeGridSpacing) + 1;
 	const unsigned long int sliceGridSize = latticeX * latticeY;
 	const unsigned long int latticeGridSize = sliceGridSize * latticeZ;
-
-	const unsigned short int numOfPointsDCS2 = 8;
 	
 	float *h_AtomX, *h_AtomY, *h_AtomZ;
 	float *h_Charge;
@@ -407,14 +406,14 @@ int main(int argc, char *argv[])
 	printf("DCSKernel duration: %f ms\n", DCSKernelTimer.Elapsed());
 
 	//DCS2
-	dim3 dimGridDCS2((latticeX - 1) / (BLOCK_WIDTH * numOfPointsDCS2) + 1, (latticeY - 1) / BLOCK_WIDTH + 1, 1);
+	dim3 dimGridDCS2((latticeX - 1) / (BLOCK_WIDTH * NUM_OF_POINTS_DCS2) + 1, (latticeY - 1) / BLOCK_WIDTH + 1, 1);
 
 	DCS2KernelTimer.Start();
 	h_LatticeDCSOffset = 0;
 	if (latticeZ > 1) {
 		for (unsigned short int z = 0; z < latticeZ; z += numOfStreams) {
 			for (streamIdx = 0; streamIdx < numOfStreams; streamIdx++) {
-				DCS2Kernel << <dimGridDCS2, dimBlockDCS, 0, stream[streamIdx] >> >(d_SliceDCS[streamIdx], d_AtomX, d_AtomY, d_AtomZ, d_Charge, z + streamIdx, numOfPointsDCS2, numOfAtoms, latticeX, latticeY, latticeGridSpacing);
+				DCS2Kernel << <dimGridDCS2, dimBlockDCS, 0, stream[streamIdx] >> >(d_SliceDCS[streamIdx], d_AtomX, d_AtomY, d_AtomZ, d_Charge, z + streamIdx, numOfAtoms, latticeX, latticeY, latticeGridSpacing);
 			}
 
 			for (streamIdx = 0; streamIdx < numOfStreams; streamIdx++) {
@@ -428,7 +427,7 @@ int main(int argc, char *argv[])
 	if (numOfRemainingLaunches != 0) {
 		unsigned short int z = (latticeZ - numOfStreams);
 		for (streamIdx = 0; streamIdx < numOfRemainingLaunches; streamIdx++) {
-			DCS2Kernel << <dimGridDCS2, dimBlockDCS, 0, stream[streamIdx] >> >(d_SliceDCS[streamIdx], d_AtomX, d_AtomY, d_AtomZ, d_Charge, z + streamIdx, numOfPointsDCS2, numOfAtoms, latticeX, latticeY, latticeGridSpacing);
+			DCS2Kernel << <dimGridDCS2, dimBlockDCS, 0, stream[streamIdx] >> >(d_SliceDCS[streamIdx], d_AtomX, d_AtomY, d_AtomZ, d_Charge, z + streamIdx, numOfAtoms, latticeX, latticeY, latticeGridSpacing);
 		}
 
 		for (streamIdx = 0; streamIdx < numOfRemainingLaunches; streamIdx++) {
