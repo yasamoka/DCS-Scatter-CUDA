@@ -12,7 +12,7 @@
 
 #include "tclap/CmdLine.h"
 
-#define EPS 0.01
+#define EPS 0.03
 #define BLOCK_WIDTH 16
 
 #define LATTICE_DATA_TYPE float
@@ -365,6 +365,7 @@ Error:
 	cudaFree(d_AtomY);
 	cudaFree(d_AtomZ);
 	for (uint8_t streamIdx = 0; streamIdx < numOfStreams; streamIdx++) {
+		cudaStreamDestroy(stream[streamIdx]);
 		cudaFree(d_SliceDCS[streamIdx]);
 	}
 
